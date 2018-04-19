@@ -17,6 +17,27 @@ namespace Corifier
                 DoCorify(arg);
             }            
         }
+        
+        //These references are disqualifying for conversion
+        private static readonly string[] DisqualifyingReferences = 
+        {
+            "System.Web.Http",
+            "System.Web.Http.Owin",
+            "Microsoft.Web.Services2"
+        };
+        
+        //These references are silently removed from projects
+        private static readonly string[] FilteredSystemReferences = {
+            "System", 
+            "System.Core", 
+            "System.Xml", 
+            "System.Xml.Linq", 
+            "System.Data.DataSetExtensions", 
+            "Microsoft.CSharp", 
+            "System.Data",
+            "mscorlib",
+            "System.Runtime.Serialization"
+        };
 
         private static void DoCorify(string originalProjectFile)
         {
@@ -31,10 +52,12 @@ namespace Corifier
             var configs = LoadConfigFiles(originalProjectFile);
             
             ValidateAppConfig(configs.AppConfig);
-                                                                                 
+            
+            var projectReferences = RenderProjectReferenceList(sourceProjectXml).ToArray();
+
             var packages = RenderPackageList(sourceProjectXml, configs.PackagesConfig);
 
-            var projectReferences = RenderProjectReferenceList(sourceProjectXml);
+            ValidatePackages(packages);
             
             var tempNewProjectFile = Path.ChangeExtension(originalProjectFile, ".new");
             
@@ -49,6 +72,18 @@ namespace Corifier
         private static void ValidateAppConfig(XDocument sourceAppConfig)
         {
             //Ensure no legacy web references or service references for example
+        }
+
+        private static void ValidatePackages(
+            ICollection<(string Name, string Version)> projectReferences)
+        {
+            foreach (var reference in projectReferences)
+            {
+                if (DisqualifyingReferences.Contains(reference.Name))
+                {
+                    throw new Exception($"Disqualifying package {reference.Name} in use");    
+                }
+            }
         }
 
         private static void WriteNetStandard2Project(string outputFile, IEnumerable<(string Name, string Version)> packages, IEnumerable<(string Name, string Path, Guid ProjectGuid)> projectReferences)
@@ -112,7 +147,7 @@ namespace Corifier
         {
             
             var projectPackages = RenderProjectPackageList(sourceProjectXml);
-            var configPackages = RenderPackagesConfigList(sourcePackagesConfig).ToList(); 
+            var configPackages = RenderPackagesConfigList(sourcePackagesConfig).ToArray(); 
             var output = new List<(string Name, string Version)>();
             foreach (var projectPackage in projectPackages)
             {
@@ -124,14 +159,8 @@ namespace Corifier
                 }
                 else
                 {
-                    foreach (var configPackage in configPackages)
-                    {
-                        if (configPackage.Name == projectPackage.Name)
-                        {
-                            //Prefer the package version from packages.config
-                            output.Add((projectPackage.Name,configPackage.Version));               
-                        }
-                    }
+                    var configPackage = configPackages.SingleOrDefault(cpkg => cpkg.Name == projectPackage.Name);
+                    output.Add((projectPackage.Name, configPackage.Version ?? projectPackage.Version));
                 }
             }
             
@@ -142,9 +171,12 @@ namespace Corifier
         {
             //packages.config - packages - package      
             var ns = XNamespace.Get("http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd");            
-            var packages = sourcePackagesConfig.Descendants("packages").Single().Descendants("package");
-            
             var output = new List<(string Name, string Version)>();
+            
+            var packagesNode = sourcePackagesConfig.Descendants("packages").SingleOrDefault();
+            if (packagesNode == null)
+                return output;
+            var packages = packagesNode.Descendants("package");                     
             foreach (var package in packages)
             {
                 var packageName = package.Attribute("id")?.Value;
@@ -194,6 +226,8 @@ namespace Corifier
             });
         }
 
+
+        
         private static IEnumerable<(string Name, string Version)> FilterSystemReferences(
             IList<(string Name, string Version)> references)
         {
@@ -207,10 +241,9 @@ namespace Corifier
                 "Microsoft.CSharp", 
                 "System.Data",
                 "mscorlib",
-                "System.Runtime.Serialization",
-                "System.Web.Http"
+                "System.Runtime.Serialization"
             };
-            return references.Where(reference => !filterList.Contains(reference.Name));
+            return references.Where(reference => !FilteredSystemReferences.Contains(reference.Name));
         }
 
         private static (string Name, string Version) ParseReference(string referenceString)
