@@ -34,9 +34,11 @@ namespace Corifier
                                                                                  
             var packages = RenderPackageList(sourceProjectXml, configs.PackagesConfig);
 
+            var projectReferences = RenderProjectReferenceList(sourceProjectXml);
+            
             var tempNewProjectFile = Path.ChangeExtension(originalProjectFile, ".new");
             
-            WriteNetStandard2Project(tempNewProjectFile, packages);
+            WriteNetStandard2Project(tempNewProjectFile, packages, projectReferences);
             
             BackupExistingProject(originalProjectFile);
             
@@ -49,8 +51,11 @@ namespace Corifier
             //Ensure no legacy web references or service references for example
         }
 
-        private static void WriteNetStandard2Project(string outputFile, ICollection<(string Name, string Version)> packages)
+        private static void WriteNetStandard2Project(string outputFile, IEnumerable<(string Name, string Version)> packages, IEnumerable<(string Name, string Path, Guid ProjectGuid)> projectReferences)
         {
+            var packageArray = packages.ToArray();
+            var projectReferenceArray = projectReferences.ToArray();
+            
             var settings = new XmlWriterSettings();
             settings.Encoding = Encoding.UTF8;
             settings.CloseOutput = true;
@@ -67,17 +72,31 @@ namespace Corifier
                 writer.WriteElementString("TargetFramework", "netstandard2.0");                
                 writer.WriteEndElement(); //PropertyGroup
 
-                if (packages.Count > 0)
+                if (packageArray.Length > 0)
                 {
                     writer.WriteStartElement("ItemGroup");
 
-                    foreach (var package in packages)
+                    foreach (var package in packageArray)
                     {
                         writer.WriteStartElement("PackageReference");
                         writer.WriteAttributeString("Include", package.Name);
                         if(package.Version != null)
                             writer.WriteAttributeString("Version", package.Version);
                         writer.WriteEndElement(); //PackageReference
+                    }
+
+                    writer.WriteEndElement(); //ItemGroup
+                }
+
+                if (projectReferenceArray.Length > 0)
+                {
+                    writer.WriteStartElement("ItemGroup");
+
+                    foreach (var projectReference in projectReferenceArray)
+                    {
+                        writer.WriteStartElement("ProjectReference");
+                        writer.WriteAttributeString("Include", projectReference.Path);
+                        writer.WriteEndElement(); //ProjectReference
                     }
 
                     writer.WriteEndElement(); //ItemGroup
@@ -91,18 +110,49 @@ namespace Corifier
 
         private static ICollection<(string Name, string Version)> RenderPackageList(XDocument sourceProjectXml, XDocument sourcePackagesConfig)
         {
+            
+            var projectPackages = RenderProjectPackageList(sourceProjectXml);
+            var configPackages = RenderPackagesConfigList(sourcePackagesConfig).ToList(); 
             var output = new List<(string Name, string Version)>();
-            output.AddRange(RenderProjectPackageList(sourceProjectXml));
-            output.AddRange(RenderPackagesConfigList(sourcePackagesConfig));
+            foreach (var projectPackage in projectPackages)
+            {
+                var projectPackageVersion = projectPackage.Version;
+                if (String.IsNullOrWhiteSpace(projectPackageVersion))
+                {
+                    //No version specified, go with that
+                    output.Add((projectPackage.Name, null));
+                }
+                else
+                {
+                    foreach (var configPackage in configPackages)
+                    {
+                        if (configPackage.Name == projectPackage.Name)
+                        {
+                            //Prefer the package version from packages.config
+                            output.Add((projectPackage.Name,configPackage.Version));               
+                        }
+                    }
+                }
+            }
+            
             return output;
         }
 
         private static IEnumerable<(string Name, string Version)> RenderPackagesConfigList(XDocument sourcePackagesConfig)
         {
             //packages.config - packages - package      
-            
+            var ns = XNamespace.Get("http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd");            
+            var packages = sourcePackagesConfig.Descendants("packages").Single().Descendants("package");
             
             var output = new List<(string Name, string Version)>();
+            foreach (var package in packages)
+            {
+                var packageName = package.Attribute("id")?.Value;
+                if (String.IsNullOrWhiteSpace(packageName))
+                    continue;
+                var packageVersion = package.Attribute("version")?.Value;
+                output.Add((packageName,packageVersion));
+            }          
             return output;
         }
 
@@ -110,7 +160,7 @@ namespace Corifier
         {
             //*.csproj - Project - ItemGroup - Reference            
             var ns = XNamespace.Get("http://schemas.microsoft.com/developer/msbuild/2003");
-
+            
             var itemGroups = sourceProjectXml.Descendants(ns + "ItemGroup").ToArray();
             
             var referenceItems = itemGroups.Descendants(ns + "Reference");
@@ -125,10 +175,41 @@ namespace Corifier
             return FilterSystemReferences(output);            
         }
 
+        private static IEnumerable<(string Name, string Path, Guid ProjectGuid)> RenderProjectReferenceList(
+            XDocument sourceProjectXml)
+        {
+            //*.csproj - Project - ItemGroup - ProjectReference            
+            var ns = XNamespace.Get("http://schemas.microsoft.com/developer/msbuild/2003");
+            
+            var itemGroups = sourceProjectXml.Descendants(ns + "ItemGroup").ToArray();
+            
+            var referenceItems = itemGroups.Descendants(ns + "ProjectReference");
+
+            return referenceItems.Select(item =>
+            {
+                var path = item.Attribute("Include")?.Value;
+                var name = item.Descendants(ns+"Name").Single()?.Value;
+                var guid = Guid.Parse(item.Descendants(ns+"Project").Single().Value);
+                return (name, path, guid);
+            });
+        }
+
         private static IEnumerable<(string Name, string Version)> FilterSystemReferences(
             IList<(string Name, string Version)> references)
         {
-            var filterList = new [] {"System", "System.Core", "System.Xml", "System.Xml.Linq", "System.Data.DataSetExtensions", "Microsoft.CSharp", "System.Data"};
+            var filterList = new []
+            {
+                "System", 
+                "System.Core", 
+                "System.Xml", 
+                "System.Xml.Linq", 
+                "System.Data.DataSetExtensions", 
+                "Microsoft.CSharp", 
+                "System.Data",
+                "mscorlib",
+                "System.Runtime.Serialization",
+                "System.Web.Http"
+            };
             return references.Where(reference => !filterList.Contains(reference.Name));
         }
 
@@ -163,7 +244,7 @@ namespace Corifier
             //Backup the existing project to another directory or a zip file
             var backupDirectory = Directory.CreateDirectory(Path.Combine(directoryName,"CorifyBackup"));
 
-            var backupProjectFile = Path.Combine(backupDirectory.FullName, Path.GetFileName(sourceProjectFile));
+            var backupProjectFile = Path.Combine(backupDirectory.FullName, Path.GetFileName(sourceProjectFile) + ".bak");
             File.Move(sourceProjectFile, backupProjectFile);
 
             var backupAppConfig = Path.Combine(backupDirectory.FullName, "app.config");
@@ -180,6 +261,12 @@ namespace Corifier
             if (Directory.Exists(propertiesDir))
             {
                 Directory.Move(propertiesDir, Path.Combine(backupDirectory.FullName, "Properties"));
+            }
+
+            var csFiles = backupDirectory.EnumerateFiles("*.cs", SearchOption.AllDirectories);
+            foreach (var csFile in csFiles)
+            {
+                csFile.MoveTo(csFile.FullName + ".bak");
             }
             
             Directory.Delete(Path.Combine(directoryName, "bin"), true);
@@ -212,7 +299,6 @@ namespace Corifier
             var ns = XNamespace.Get("http://schemas.microsoft.com/developer/msbuild/2003");
 
             var propertyGroups = sourceProjectXml.Descendants(ns + "PropertyGroup").ToArray();
-            //var itemGroups = sourceProjectXml.Descendants(ns + "ItemGroup").ToArray();
 
             //Project - PropertyGroup - TargetFrameworkVersion - (If exists, must be v4.6.1+)
             var targetFramework = GetSingleProperty(propertyGroups, ns + "TargetFrameworkVersion");
