@@ -14,7 +14,21 @@ namespace Corifier
         {
             foreach (var arg in args)
             {
-                DoCorify(arg);
+                try
+                {
+                    DoCorify(arg);
+                    Console.Out.WriteLine($"Converted project {arg}");
+                }
+                catch (UnsuitableProjectException e)
+                {
+                    Console.Out.WriteLine($"Project {arg} is not a candidate for conversion: {e.Message}");
+                }
+                catch (Exception e)
+                {
+                    Console.Error.WriteLine($"Failed to convert {arg} due to exception");
+                    Console.Error.WriteLine($"{e.Message}");
+                    Console.Error.WriteLine($"{e.StackTrace}");
+                }
             }            
         }
         
@@ -81,7 +95,7 @@ namespace Corifier
             {
                 if (DisqualifyingReferences.Contains(reference.Name))
                 {
-                    throw new Exception($"Disqualifying package {reference.Name} in use");    
+                    throw new UnsuitableProjectException($"Disqualifying package {reference.Name} in use");    
                 }
             }
         }
@@ -301,9 +315,15 @@ namespace Corifier
             {
                 csFile.MoveTo(csFile.FullName + ".bak");
             }
-            
-            Directory.Delete(Path.Combine(directoryName, "bin"), true);
-            Directory.Delete(Path.Combine(directoryName, "obj"), true);
+                        
+            DeleteDirectoryIfExists(Path.Combine(directoryName, "bin"));
+            DeleteDirectoryIfExists(Path.Combine(directoryName, "obj"));
+        }
+        
+        private static void DeleteDirectoryIfExists(string path)
+        {
+            if(Directory.Exists(path))
+                Directory.Delete(path, true);
         }
 
         private static (XDocument AppConfig, XDocument PackagesConfig) LoadConfigFiles(string sourceProjectFile)
@@ -335,23 +355,34 @@ namespace Corifier
 
             //Project - PropertyGroup - TargetFrameworkVersion - (If exists, must be v4.6.1+)
             var targetFramework = GetSingleProperty(propertyGroups, ns + "TargetFrameworkVersion");
+
+            if(targetFramework == null)
+                throw new UnsuitableProjectException("Unable to locate TargetFrameworkVersion");
+            
             if(!targetFramework.StartsWith("v4.6.") && !targetFramework.StartsWith("v4.7")) //TODO: This is ridiculous, do better
-                throw new Exception("Project must be v4.6.1 or higher");
+                throw new UnsuitableProjectException("Project must be v4.6.1 or higher");
 
             //Project - PropertyGroup - OutputType (must be Library)           
             var outputType = GetSingleProperty(propertyGroups, ns + "OutputType");
             if(outputType != "Library")
-                throw new Exception("Project must have OutputType of Library");            
+                throw new UnsuitableProjectException("Project must have OutputType of Library");            
         }
 
         private static string GetSingleProperty(ICollection<XElement> propertyGroups, XName propertyName)
         {
             return propertyGroups
                 .SelectMany(propertyGroup => propertyGroup.Descendants(propertyName))
-                .Single()
-                .Value;
+                .SingleOrDefault()
+                ?.Value;
         }
 
+    }
+
+    class UnsuitableProjectException : Exception
+    {
+        public UnsuitableProjectException(string message) : base(message)
+        {
+        }
     }
 }
 
