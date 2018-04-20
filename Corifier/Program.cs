@@ -29,25 +29,26 @@ namespace Corifier
                     Console.Error.WriteLine($"{e.Message}");
                     Console.Error.WriteLine($"{e.StackTrace}");
                 }
-            }            
+            }
         }
-        
+
         //These references are disqualifying for conversion
-        private static readonly string[] DisqualifyingReferences = 
+        private static readonly string[] DisqualifyingReferences =
         {
             "System.Web.Http",
             "System.Web.Http.Owin",
             "Microsoft.Web.Services2"
         };
-        
+
         //These references are silently removed from projects
-        private static readonly string[] FilteredSystemReferences = {
-            "System", 
-            "System.Core", 
-            "System.Xml", 
-            "System.Xml.Linq", 
-            "System.Data.DataSetExtensions", 
-            "Microsoft.CSharp", 
+        private static readonly string[] FilteredSystemReferences =
+        {
+            "System",
+            "System.Core",
+            "System.Xml",
+            "System.Xml.Linq",
+            "System.Data.DataSetExtensions",
+            "Microsoft.CSharp",
             "System.Data",
             "mscorlib",
             "System.Runtime.Serialization"
@@ -55,7 +56,7 @@ namespace Corifier
 
         private static void DoCorify(string originalProjectFile)
         {
-            if(!File.Exists(originalProjectFile))
+            if (!File.Exists(originalProjectFile))
                 throw new Exception($"Project file {originalProjectFile} does not exist");
 
             var sourceProjectXml = LoadOptionalXmlDocument(originalProjectFile);
@@ -64,23 +65,22 @@ namespace Corifier
             ValidateSourceProject(sourceProjectXml);
 
             var configs = LoadConfigFiles(originalProjectFile);
-            
+
             ValidateAppConfig(configs.AppConfig);
-            
+
             var projectReferences = RenderProjectReferenceList(sourceProjectXml).ToArray();
 
             var packages = RenderPackageList(sourceProjectXml, configs.PackagesConfig);
 
             ValidatePackages(packages);
-            
+
             var tempNewProjectFile = Path.ChangeExtension(originalProjectFile, ".new");
-            
+
             WriteNetStandard2Project(tempNewProjectFile, packages, projectReferences);
-            
+
             BackupExistingProject(originalProjectFile);
-            
+
             File.Move(tempNewProjectFile, originalProjectFile);
-            
         }
 
         private static void ValidateAppConfig(XDocument sourceAppConfig)
@@ -93,18 +93,21 @@ namespace Corifier
         {
             foreach (var reference in projectReferences)
             {
-                if (DisqualifyingReferences.Contains(reference.Name))
+                if (DisqualifyingReferences.Any(badRef =>
+                    String.Compare(badRef, reference.Name, StringComparison.OrdinalIgnoreCase) == 0))
                 {
-                    throw new UnsuitableProjectException($"Disqualifying package {reference.Name} in use");    
+                    throw new UnsuitableProjectException($"Disqualifying package {reference.Name} in use");
                 }
             }
         }
 
-        private static void WriteNetStandard2Project(string outputFile, IEnumerable<(string Name, string Version)> packages, IEnumerable<(string Name, string Path, Guid ProjectGuid)> projectReferences)
+        private static void WriteNetStandard2Project(string outputFile,
+            IEnumerable<(string Name, string Version)> packages,
+            IEnumerable<(string Name, string Path, Guid ProjectGuid)> projectReferences)
         {
             var packageArray = packages.ToArray();
             var projectReferenceArray = projectReferences.ToArray();
-            
+
             var settings = new XmlWriterSettings();
             settings.Encoding = Encoding.UTF8;
             settings.CloseOutput = true;
@@ -113,12 +116,12 @@ namespace Corifier
             using (var writer = XmlWriter.Create(outputFile, settings))
             {
                 writer.WriteStartDocument();
-                
+
                 writer.WriteStartElement("Project");
-                writer.WriteAttributeString("Sdk", "Microsoft.NET.Sdk");                
-                
-                writer.WriteStartElement("PropertyGroup");                
-                writer.WriteElementString("TargetFramework", "netstandard2.0");                
+                writer.WriteAttributeString("Sdk", "Microsoft.NET.Sdk");
+
+                writer.WriteStartElement("PropertyGroup");
+                writer.WriteElementString("TargetFramework", "netstandard2.0");
                 writer.WriteEndElement(); //PropertyGroup
 
                 if (packageArray.Length > 0)
@@ -129,7 +132,7 @@ namespace Corifier
                     {
                         writer.WriteStartElement("PackageReference");
                         writer.WriteAttributeString("Include", package.Name);
-                        if(package.Version != null)
+                        if (package.Version != null)
                             writer.WriteAttributeString("Version", package.Version);
                         writer.WriteEndElement(); //PackageReference
                     }
@@ -152,16 +155,16 @@ namespace Corifier
                 }
 
                 writer.WriteEndElement(); //Project
-                                
+
                 writer.WriteEndDocument();
             }
         }
 
-        private static ICollection<(string Name, string Version)> RenderPackageList(XDocument sourceProjectXml, XDocument sourcePackagesConfig)
+        private static ICollection<(string Name, string Version)> RenderPackageList(XDocument sourceProjectXml,
+            XDocument sourcePackagesConfig)
         {
-            
             var projectPackages = RenderProjectPackageList(sourceProjectXml);
-            var configPackages = RenderPackagesConfigList(sourcePackagesConfig).ToArray(); 
+            var configPackages = RenderPackagesConfigList(sourcePackagesConfig).ToArray();
             var output = new List<(string Name, string Version)>();
             foreach (var projectPackage in projectPackages)
             {
@@ -177,28 +180,30 @@ namespace Corifier
                     output.Add((projectPackage.Name, configPackage.Version ?? projectPackage.Version));
                 }
             }
-            
+
             return output;
         }
 
-        private static IEnumerable<(string Name, string Version)> RenderPackagesConfigList(XDocument sourcePackagesConfig)
+        private static IEnumerable<(string Name, string Version)> RenderPackagesConfigList(
+            XDocument sourcePackagesConfig)
         {
             //packages.config - packages - package      
-            var ns = XNamespace.Get("http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd");            
+            var ns = XNamespace.Get("http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd");
             var output = new List<(string Name, string Version)>();
-            
+
             var packagesNode = sourcePackagesConfig.Descendants("packages").SingleOrDefault();
             if (packagesNode == null)
                 return output;
-            var packages = packagesNode.Descendants("package");                     
+            var packages = packagesNode.Descendants("package");
             foreach (var package in packages)
             {
                 var packageName = package.Attribute("id")?.Value;
                 if (String.IsNullOrWhiteSpace(packageName))
                     continue;
                 var packageVersion = package.Attribute("version")?.Value;
-                output.Add((packageName,packageVersion));
-            }          
+                output.Add((packageName, packageVersion));
+            }
+
             return output;
         }
 
@@ -206,19 +211,19 @@ namespace Corifier
         {
             //*.csproj - Project - ItemGroup - Reference            
             var ns = XNamespace.Get("http://schemas.microsoft.com/developer/msbuild/2003");
-            
+
             var itemGroups = sourceProjectXml.Descendants(ns + "ItemGroup").ToArray();
-            
+
             var referenceItems = itemGroups.Descendants(ns + "Reference");
 
             var includeStrings = referenceItems.Select(item => item.Attribute("Include")?.Value);
 
             var output = new List<(string Name, string Version)>();
-            
+
             foreach (var includeString in includeStrings)
                 output.Add(ParseReference(includeString));
 
-            return FilterSystemReferences(output);            
+            return FilterSystemReferences(output);
         }
 
         private static IEnumerable<(string Name, string Path, Guid ProjectGuid)> RenderProjectReferenceList(
@@ -226,45 +231,45 @@ namespace Corifier
         {
             //*.csproj - Project - ItemGroup - ProjectReference            
             var ns = XNamespace.Get("http://schemas.microsoft.com/developer/msbuild/2003");
-            
+
             var itemGroups = sourceProjectXml.Descendants(ns + "ItemGroup").ToArray();
-            
+
             var referenceItems = itemGroups.Descendants(ns + "ProjectReference");
 
             return referenceItems.Select(item =>
             {
                 var path = item.Attribute("Include")?.Value;
-                var name = item.Descendants(ns+"Name").Single()?.Value;
-                var guid = Guid.Parse(item.Descendants(ns+"Project").Single().Value);
+                var name = item.Descendants(ns + "Name").Single()?.Value;
+                var guid = Guid.Parse(item.Descendants(ns + "Project").Single().Value);
                 return (name, path, guid);
             });
         }
 
 
-        
         private static IEnumerable<(string Name, string Version)> FilterSystemReferences(
             IList<(string Name, string Version)> references)
         {
-            var filterList = new []
+            var filterList = new[]
             {
-                "System", 
-                "System.Core", 
-                "System.Xml", 
-                "System.Xml.Linq", 
-                "System.Data.DataSetExtensions", 
-                "Microsoft.CSharp", 
+                "System",
+                "System.Core",
+                "System.Xml",
+                "System.Xml.Linq",
+                "System.Data.DataSetExtensions",
+                "Microsoft.CSharp",
                 "System.Data",
                 "mscorlib",
                 "System.Runtime.Serialization"
             };
-            return references.Where(reference => !FilteredSystemReferences.Contains(reference.Name));
+            return references.Where(reference => FilteredSystemReferences.All(filteredReference =>
+                String.Compare(filteredReference, reference.Name, StringComparison.OrdinalIgnoreCase) != 0));
         }
 
         private static (string Name, string Version) ParseReference(string referenceString)
         {
             var referenceParts = referenceString.Split(',');
             var referenceName = referenceParts[0];
-            string referenceVersion = null;           
+            string referenceVersion = null;
             if (referenceParts.Length > 1)
             {
                 for (int i = 1; i < referenceParts.Length; i++)
@@ -286,22 +291,23 @@ namespace Corifier
 
         private static void BackupExistingProject(string sourceProjectFile)
         {
-            var directoryName = Path.GetDirectoryName(sourceProjectFile);            
-                                    
-            //Backup the existing project to another directory or a zip file
-            var backupDirectory = Directory.CreateDirectory(Path.Combine(directoryName,"CorifyBackup"));
+            var directoryName = Path.GetDirectoryName(sourceProjectFile);
 
-            var backupProjectFile = Path.Combine(backupDirectory.FullName, Path.GetFileName(sourceProjectFile) + ".bak");
+            //Backup the existing project to another directory or a zip file
+            var backupDirectory = Directory.CreateDirectory(Path.Combine(directoryName, "CorifyBackup"));
+
+            var backupProjectFile =
+                Path.Combine(backupDirectory.FullName, Path.GetFileName(sourceProjectFile) + ".bak");
             File.Move(sourceProjectFile, backupProjectFile);
 
             var backupAppConfig = Path.Combine(backupDirectory.FullName, "app.config");
             var appConfigName = Path.Combine(directoryName, "app.config");
-            if(File.Exists(appConfigName))
+            if (File.Exists(appConfigName))
                 File.Move(appConfigName, backupAppConfig);
 
             var backupPackagesConfig = Path.Combine(backupDirectory.FullName, "packages.config");
             var packagesConfigName = Path.Combine(directoryName, "packages.config");
-            if(File.Exists(packagesConfigName))
+            if (File.Exists(packagesConfigName))
                 File.Move(packagesConfigName, backupPackagesConfig);
 
             var propertiesDir = Path.Combine(directoryName, "Properties");
@@ -315,14 +321,14 @@ namespace Corifier
             {
                 csFile.MoveTo(csFile.FullName + ".bak");
             }
-                        
+
             DeleteDirectoryIfExists(Path.Combine(directoryName, "bin"));
             DeleteDirectoryIfExists(Path.Combine(directoryName, "obj"));
         }
-        
+
         private static void DeleteDirectoryIfExists(string path)
         {
-            if(Directory.Exists(path))
+            if (Directory.Exists(path))
                 Directory.Delete(path, true);
         }
 
@@ -332,16 +338,16 @@ namespace Corifier
 
             var appConfigName = Path.Combine(directoryName, "app.config");
             var sourceAppConfig = LoadOptionalXmlDocument(appConfigName);
-            
+
             var packagesConfigName = Path.Combine(directoryName, "packages.config");
             var sourcePackagesConfig = LoadOptionalXmlDocument(packagesConfigName);
-            
+
             return (sourceAppConfig, sourcePackagesConfig);
         }
 
         private static XDocument LoadOptionalXmlDocument(string fileName)
         {
-            if (!File.Exists(fileName)) return new XDocument();            
+            if (!File.Exists(fileName)) return new XDocument();
             var bytes = File.ReadAllBytes(fileName);
             return XDocument.Load(new MemoryStream(bytes));
         }
@@ -356,16 +362,17 @@ namespace Corifier
             //Project - PropertyGroup - TargetFrameworkVersion - (If exists, must be v4.6.1+)
             var targetFramework = GetSingleProperty(propertyGroups, ns + "TargetFrameworkVersion");
 
-            if(targetFramework == null)
+            if (targetFramework == null)
                 throw new UnsuitableProjectException("Unable to locate TargetFrameworkVersion");
-            
-            if(!targetFramework.StartsWith("v4.6.") && !targetFramework.StartsWith("v4.7")) //TODO: This is ridiculous, do better
+
+            if (!targetFramework.StartsWith("v4.6.") && !targetFramework.StartsWith("v4.7")
+            ) //TODO: This is ridiculous, do better
                 throw new UnsuitableProjectException("Project must be v4.6.1 or higher");
 
             //Project - PropertyGroup - OutputType (must be Library)           
             var outputType = GetSingleProperty(propertyGroups, ns + "OutputType");
-            if(outputType != "Library")
-                throw new UnsuitableProjectException("Project must have OutputType of Library");            
+            if (outputType != "Library")
+                throw new UnsuitableProjectException("Project must have OutputType of Library");
         }
 
         private static string GetSingleProperty(ICollection<XElement> propertyGroups, XName propertyName)
@@ -375,7 +382,6 @@ namespace Corifier
                 .SingleOrDefault()
                 ?.Value;
         }
-
     }
 
     class UnsuitableProjectException : Exception
@@ -385,31 +391,3 @@ namespace Corifier
         }
     }
 }
-
-/*
- There are many PropertyGroup objects, could be any of them
- Project - PropertyGroup - TargetFrameworkVersion - (If exists, must be v4.6.1+)
- 
-  
- 
-<Project ToolsVersion="12.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
-  <PropertyGroup>
-    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
-    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
-    <ProjectGuid>{83B8BD1A-5BD0-41FD-8538-7C76CCC7AC83}</ProjectGuid>
-    <OutputType>Library</OutputType>
-    <AppDesignerFolder>Properties</AppDesignerFolder>
-    <RootNamespace>DispatcherSupport</RootNamespace>
-    <AssemblyName>DispatcherSupport</AssemblyName>
-    <TargetFrameworkVersion>v4.6.2</TargetFrameworkVersion>
-    
-
-
-  Project - ItemGroup - Compile
-  Project - ItemGroup - None (exclude app.config, packages.config)    
-
-
-  
-      
-*/
