@@ -35,9 +35,11 @@ namespace Corifier
         //These references are disqualifying for conversion
         private static readonly string[] DisqualifyingReferences =
         {
+            "System.Web",
             "System.Web.Http",
             "System.Web.Http.Owin",
-            "Microsoft.Web.Services2"
+            "Microsoft.Web.Services2",
+            "System.Configuration"
         };
 
         //These references are silently removed from projects
