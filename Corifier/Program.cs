@@ -39,7 +39,8 @@ namespace Corifier
             "System.Web.Http",
             "System.Web.Http.Owin",
             "Microsoft.Web.Services2",
-            "System.Configuration"
+            "System.Configuration",
+            "Microsoft.Practices.Unity"
         };
 
         //These references are silently removed from projects
